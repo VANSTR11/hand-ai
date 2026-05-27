@@ -1,20 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Hand Gesture AI</title>
+    <title>Hand Scanner AI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; overflow: hidden; }
+        body { margin: 0; background: #000; color: #0ff; font-family: 'Courier New', monospace; overflow: hidden; }
         #video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         #canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
-      .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 24px; text-shadow: 0 0 10px #0f0; }
-      .glitch { animation: glitch 1s linear infinite; }
+       .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
+       .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
+       .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
+       .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
+       .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+       .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
+       .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
+       .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+       .glitch { animation: glitch 0.3s linear infinite; }
         @keyframes glitch {
-            2%,64% { transform: translate(2px,0) skew(0deg); }
-            4%,60% { transform: translate(-2px,0) skew(0deg); }
-            62% { transform: translate(0,0) skew(5deg); }
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 2px) }
+            40% { transform: translate(-2px, -2px) }
+            60% { transform: translate(2px, 2px) }
+            80% { transform: translate(2px, -2px) }
+            100% { transform: translate(0) }
         }
-        #status { position: absolute; bottom: 20px; left: 20px; font-size: 18px; }
+        #status { position: absolute; bottom: 20px; left: 20px; font-size: 16px; color: #0f0; }
+        #startBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 20px 40px; font-size: 24px; background: #0ff; color: #000;
+            border: none; border-radius: 10px; z-index: 20; cursor: pointer;
+            box-shadow: 0 0 20px #0ff;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
@@ -22,20 +38,31 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
+    <button id="startBtn">TAP UNTUK MULAI</button>
     <video id="video"></video>
     <canvas id="canvas"></canvas>
-    <div class="ui glitch">LOADING AI...</div>
-    <div id="status">Arahkan tangan ke kamera</div>
+    <div class="ui">[SYSTEM] HAND SCANNER v2.0</div>
+    <div id="scanBox" class="scan-box">
+        <div class="corner tl"></div><div class="corner tr"></div>
+        <div class="corner bl"></div><div class="corner br"></div>
+        <div id="scanText" class="scan-text">SCANNING... 0%</div>
+    </div>
+    <div id="status">Klik tombol untuk aktifkan kamera</div>
 
     <script type="module">
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
+        const scanBox = document.getElementById('scanBox');
+        const scanText = document.getElementById('scanText');
         const statusEl = document.getElementById('status');
-        const ui = document.querySelector('.ui');
-        
+        const startBtn = document.getElementById('startBtn');
+
+        let scanProgress = 0;
         let lastGesture = '';
-        let gestureTimeout;
+        let scanInterval;
+        let camera;
+        let gestureReady = false;
 
         function onResults(results) {
             canvas.width = video.videoWidth;
@@ -43,44 +70,92 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-            if (results.multiHandLandmarks) {
-                ui.innerText = "AI ACTIVE";
-                for (const landmarks of results.multiHandLandmarks) {
-                    drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
-                    drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 1});
-                    
-                    const thumbTip = landmarks[4];
-                    const indexTip = landmarks[8];
-                    const middleTip = landmarks[12];
-                    const wrist = landmarks[0];
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
+                drawLandmarks(ctx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 3});
 
-                    // Jempol ke Atas = Buka WhatsApp
-                    if (thumbTip.y < indexTip.y && lastGesture!== 'wa') {
-                        lastGesture = 'wa';
-                        statusEl.innerText = "AI Trigger: Membuka WhatsApp...";
-                        window.open('https://wa.me/', '_blank');
-                        clearTimeout(gestureTimeout);
-                        gestureTimeout = setTimeout(() => { lastGesture = ''; statusEl.innerText = "Arahkan tangan ke kamera"; }, 3000);
-                    }
-                    
-                    // Telapak Tangan = Buka Instagram 
-                    if (middleTip.y < wrist.y && Math.abs(thumbTip.x - indexTip.x) > 0.1 && lastGesture!== 'ig') {
-                        lastGesture = 'ig';
-                        statusEl.innerText = "AI Trigger: Membuka Instagram...";
-                        window.open('https://instagram.com', '_blank');
-                        clearTimeout(gestureTimeout);
-                        gestureTimeout = setTimeout(() => { lastGesture = ''; statusEl.innerText = "Arahkan tangan ke kamera"; }, 3000);
-                    }
+                let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                for (const lm of landmarks) {
+                    minX = Math.min(minX, lm.x);
+                    minY = Math.min(minY, lm.y);
+                    maxX = Math.max(maxX, lm.x);
+                    maxY = Math.max(maxY, lm.y);
                 }
+
+                const padding = 0.05;
+                scanBox.style.display = 'block';
+                scanBox.style.left = (minX - padding) * canvas.width + 'px';
+                scanBox.style.top = (minY - padding) * canvas.height + 'px';
+                scanBox.style.width = (maxX - minX + padding*2) * canvas.width + 'px';
+                scanBox.style.height = (maxY - minY + padding*2) * canvas.height + 'px';
+
+                if (!scanInterval) {
+                    scanProgress = 0;
+                    gestureReady = false;
+                    scanBox.classList.add('glitch');
+                    scanInterval = setInterval(() => {
+                        scanProgress += Math.random() * 15;
+                        if (scanProgress >= 100) {
+                            scanProgress = 100;
+                            clearInterval(scanInterval);
+                            scanInterval = null;
+                            scanText.innerText = `SCAN COMPLETE`;
+                            gestureReady = true;
+                            setTimeout(() => scanBox.classList.remove('glitch'), 500);
+                            triggerGesture(landmarks);
+                        } else {
+                            scanText.innerText = `SCANNING... ${Math.floor(scanProgress)}%`;
+                        }
+                    }, 100);
+                } else if (gestureReady) {
+                    triggerGesture(landmarks);
+                }
+            } else {
+                scanBox.style.display = 'none';
+                if (scanInterval) {
+                    clearInterval(scanInterval);
+                    scanInterval = null;
+                }
+                statusEl.innerText = "Tangan tidak terdeteksi";
             }
         }
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-        hands.onResults(onResults);
+        function triggerGesture(landmarks) {
+            if (!gestureReady) return;
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const wrist = landmarks[0];
 
-        const camera = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 });
-        camera.start();
+            // Jempol ke atas = WhatsApp
+            if (thumbTip.y < indexTip.y - 0.1 && thumbTip.y < middleTip.y - 0.1 && lastGesture!== 'wa') {
+                lastGesture = 'wa';
+                statusEl.innerText = "[ACCESS GRANTED] Membuka WhatsApp...";
+                location.href = 'https://wa.me/'; // Pake location.href biar gak diblokir
+                setTimeout(() => { lastGesture = ''; }, 4000);
+            }
+            // Telapak tangan = Instagram
+            else if (indexTip.y < wrist.y && middleTip.y < wrist.y && lastGesture!== 'ig') {
+                lastGesture = 'ig';
+                statusEl.innerText = "[ACCESS GRANTED] Membuka Instagram...";
+                location.href = 'https://instagram.com';
+                setTimeout(() => { lastGesture = ''; }, 4000);
+            }
+        }
+
+        startBtn.onclick = async () => {
+            startBtn.style.display = 'none';
+            statusEl.innerText = "Mengaktifkan kamera...";
+
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            hands.onResults(onResults);
+
+            camera = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 });
+            await camera.start();
+            statusEl.innerText = "Arahkan telapak tangan ke kamera";
+        };
     </script>
 </body>
 </html>
