@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Hand Scanner AI</title>
+    <title>Hand + Face Scanner AI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { margin: 0; background: #000; color: #0ff; font-family: 'Courier New', monospace; overflow: hidden; }
@@ -9,8 +9,11 @@
         #canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
 .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
 .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
+.face-box { position: absolute; border: 3px solid #0f0; box-shadow: 0 0 20px #0f0, inset 0 0 20px #0f0; z-index: 5; display: none; }
 .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
+.face-text { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); color: #0f0; font-size: 16px; font-weight: bold; }
 .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
+.face-corner { border-color: #0f0; }
 .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
 .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
 .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
@@ -36,18 +39,24 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
-    <button id="startBtn">TAP TO START + ENABLE VOICE</button>
+    <button id="startBtn">TAP TO START</button>
     <video id="video"></video>
     <canvas id="canvas"></canvas>
-    <div class="ui">[SYSTEM] HAND SCANNER v2.0</div>
+    <div class="ui">[SYSTEM] BIOMETRIC SCANNER v3.0</div>
     <div id="scanBox" class="scan-box">
         <div class="corner tl"></div><div class="corner tr"></div>
         <div class="corner bl"></div><div class="corner br"></div>
-        <div id="scanText" class="scan-text">SCANNING... 0%</div>
+        <div id="scanText" class="scan-text">SCANNING...</div>
     </div>
-    <div id="status">Tap button to activate camera + voice</div>
+    <div id="faceBox" class="face-box">
+        <div class="corner face-corner tl"></div><div class="corner face-corner tr"></div>
+        <div class="corner face-corner bl"></div><div class="corner face-corner br"></div>
+        <div id="faceText" class="face-text">FACE DETECTED</div>
+    </div>
+    <div id="status">Tap button to activate camera</div>
 
     <script type="module">
         const video = document.getElementById('video');
@@ -55,37 +64,62 @@
         const ctx = canvas.getContext('2d');
         const scanBox = document.getElementById('scanBox');
         const scanText = document.getElementById('scanText');
+        const faceBox = document.getElementById('faceBox');
+        const faceText = document.getElementById('faceText');
         const statusEl = document.getElementById('status');
         const startBtn = document.getElementById('startBtn');
 
-        // TEXT TO SPEECH - ENGLISH VOICE
+        let scanComplete = false;
+        let lastGesture = '';
+        let camera;
+        let scanTimeout;
+        let faceDetected = false;
+
+        // ENGLISH VOICE
         function speak(text) {
             if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel(); // Stop suara sebelumnya
+                window.speechSynthesis.cancel();
                 const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = 'en-US'; // Bahasa Inggris
-                utterance.volume = 1.0; // Volume 100%
-                utterance.rate = 1.1; // Speed agak cepet biar keren
-                utterance.pitch = 0.8; // Pitch rendah biar kayak AI
+                utterance.lang = 'en-US';
+                utterance.volume = 1.0;
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
                 window.speechSynthesis.speak(utterance);
             }
         }
 
-        let scanProgress = 0;
-        let lastGesture = '';
-        let scanInterval;
-        let camera;
-        let gestureReady = false;
-        let lastSpokenPercent = -1;
-
+        // GESTURE DETECTION
         function isPeaceSign(landmarks) {
             const tipIds = [4, 8, 12, 16, 20];
             const fingers = [];
-            fingers.push(landmarks[4].x > landmarks[3].x);
+            fingers.push(landmarks[4].x > landmarks[3].x); // Thumb
             for (let i = 1; i < 5; i++) {
                 fingers.push(landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y);
             }
             return fingers[1] && fingers[2] &&!fingers[3] &&!fingers[4];
+        }
+
+        function isThumbsUp(landmarks) {
+            const thumbTip = landmarks[4];
+            const thumbIp = landmarks[3];
+            const indexTip = landmarks[8];
+            return thumbTip.y < thumbIp.y && indexTip.y > landmarks[6].y;
+        }
+
+        function isThumbsDown(landmarks) {
+            const thumbTip = landmarks[4];
+            const thumbIp = landmarks[3];
+            const indexTip = landmarks[8];
+            return thumbTip.y > thumbIp.y && indexTip.y > landmarks[6].y;
+        }
+
+        function isOpenPalm(landmarks) {
+            const tipIds = [8, 12, 16, 20];
+            let openFingers = 0;
+            for (let i = 0; i < 4; i++) {
+                if (landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y) openFingers++;
+            }
+            return openFingers >= 4;
         }
 
         function onResults(results) {
@@ -94,6 +128,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
+            // HAND DETECTION
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
@@ -114,73 +149,88 @@
                 scanBox.style.width = (maxX - minX + padding*2) * canvas.width + 'px';
                 scanBox.style.height = (maxY - minY + padding*2) * canvas.height + 'px';
 
-                if (!scanInterval) {
-                    scanProgress = 0;
-                    gestureReady = false;
-                    lastSpokenPercent = -1;
+                if (!scanComplete) {
                     scanBox.classList.add('glitch');
-                    speak("Scanning initiated"); // Ngomong pas mulai scan
-                    scanInterval = setInterval(() => {
-                        scanProgress += Math.random() * 15;
-                        const currentPercent = Math.floor(scanProgress);
-
-                        // Ngomong tiap 25%
-                        if (currentPercent >= lastSpokenPercent + 25 && currentPercent < 100) {
-                            speak(`${currentPercent} percent`);
-                            lastSpokenPercent = currentPercent;
-                        }
-
-                        if (scanProgress >= 100) {
-                            scanProgress = 100;
-                            clearInterval(scanInterval);
-                            scanInterval = null;
+                    scanText.innerText = `SCANNING...`;
+                    if (!scanTimeout) {
+                        scanTimeout = setTimeout(() => {
+                            scanComplete = true;
                             scanText.innerText = `SCAN COMPLETE`;
-                            gestureReady = true;
-                            speak("Scan complete. Identity verified."); // Ngomong pas selesai
                             setTimeout(() => scanBox.classList.remove('glitch'), 500);
                             checkGesture(landmarks);
-                        } else {
-                            scanText.innerText = `SCANNING... ${currentPercent}%`;
-                        }
-                    }, 150);
-                } else if (gestureReady) {
+                        }, 1500);
+                    }
+                } else {
                     checkGesture(landmarks);
                 }
             } else {
                 scanBox.style.display = 'none';
-                if (scanInterval) {
-                    clearInterval(scanInterval);
-                    scanInterval = null;
+                if (scanTimeout) {
+                    clearTimeout(scanTimeout);
+                    scanTimeout = null;
                 }
-                statusEl.innerText = "Hand not detected";
+                scanComplete = false;
+                statusEl.innerText = faceDetected? "Face detected. Show your hand" : "Hand not detected";
+            }
+
+            // FACE DETECTION
+            if (results.detections && results.detections.length > 0) {
+                faceDetected = true;
+                const detection = results.detections[0].boundingBox;
+                faceBox.style.display = 'block';
+                faceBox.style.left = detection.xCenter * canvas.width - (detection.width * canvas.width) / 2 + 'px';
+                faceBox.style.top = detection.yCenter * canvas.height - (detection.height * canvas.height) / 2 + 'px';
+                faceBox.style.width = detection.width * canvas.width + 'px';
+                faceBox.style.height = detection.height * canvas.height + 'px';
+                faceText.innerText = `FACE DETECTED`;
+            } else {
+                faceDetected = false;
+                faceBox.style.display = 'none';
             }
         }
 
         function checkGesture(landmarks) {
-            if (!gestureReady || lastGesture === 'tiktok') return;
+            if (!scanComplete || lastGesture) return;
 
             if (isPeaceSign(landmarks)) {
                 lastGesture = 'tiktok';
                 statusEl.innerText = "[ACCESS GRANTED] Opening TikTok...";
-                speak("Access granted. Opening TikTok."); // Ngomong pas buka TikTok
+                speak("Correct. Access granted. Opening TikTok");
                 setTimeout(() => {
                     location.href = 'https://www.tiktok.com/';
-                }, 1500); // Delay 1.5 detik biar suaranya selesai dulu
+                }, 2000);
                 setTimeout(() => { lastGesture = ''; }, 5000);
+            } else if (isThumbsUp(landmarks) || isThumbsDown(landmarks) || isOpenPalm(landmarks)) {
+                lastGesture = 'wrong';
+                statusEl.innerText = "[ACCESS DENIED] Wrong gesture";
+                speak("Wrong gesture. Access denied");
+                setTimeout(() => { lastGesture = ''; }, 3000);
             }
         }
 
         startBtn.onclick = async () => {
-            speak("System activated"); // Test suara pas klik tombol
-
+            speak("System activated. Starting biometric scan");
             startBtn.style.display = 'none';
             statusEl.innerText = "Activating camera...";
 
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-            hands.onResults(onResults);
 
-            camera = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 });
+            const faceDetection = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
+            faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+
+            // Combine results
+            hands.onResults(onResults);
+            faceDetection.onResults(onResults);
+
+            camera = new Camera(video, {
+                onFrame: async () => {
+                    await hands.send({image: video});
+                    await faceDetection.send({image: video});
+                },
+                width: 1280,
+                height: 720
+            });
             await camera.start();
             statusEl.innerText = "Show ✌️ to open TikTok";
         };
