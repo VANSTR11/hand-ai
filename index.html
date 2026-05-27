@@ -7,15 +7,15 @@
         body { margin: 0; background: #000; color: #0ff; font-family: 'Courier New', monospace; overflow: hidden; }
         #video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         #canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
-    .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
-    .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
-    .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
-    .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
-    .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
-    .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
-    .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
-    .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
-    .glitch { animation: glitch 0.3s linear infinite; }
+  .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
+  .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
+  .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
+  .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
+  .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+  .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
+  .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
+  .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+  .glitch { animation: glitch 0.3s linear infinite; }
         @keyframes glitch {
             0% { transform: translate(0) }
             20% { transform: translate(-2px, 2px) }
@@ -38,7 +38,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
-    <button id="startBtn">TAP UNTUK MULAI</button>
+    <button id="startBtn">TAP UNTUK MULAI + AKTIFKAN SUARA</button>
     <video id="video"></video>
     <canvas id="canvas"></canvas>
     <div class="ui">[SYSTEM] HAND SCANNER v2.0</div>
@@ -47,12 +47,7 @@
         <div class="corner bl"></div><div class="corner br"></div>
         <div id="scanText" class="scan-text">SCANNING... 0%</div>
     </div>
-    <div id="status">Klik tombol untuk aktifkan kamera</div>
-
-    <!-- EFEK SUARA -->
-    <audio id="beepSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_8b2d3b1b7c.mp3?filename=beep-6-96243.mp3" preload="auto"></audio>
-    <audio id="glitchSound" src="https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8a8e1e4b1.mp3?filename=glitch-sound-effect-120058.mp3" preload="auto"></audio>
-    <audio id="accessSound" src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1ca4a.mp3?filename=success-1-6297.mp3" preload="auto"></audio>
+    <div id="status">Klik tombol untuk aktifkan kamera + suara</div>
 
     <script type="module">
         const video = document.getElementById('video');
@@ -63,24 +58,27 @@
         const statusEl = document.getElementById('status');
         const startBtn = document.getElementById('startBtn');
 
-        // Sound
-        const beepSound = document.getElementById('beepSound');
-        const glitchSound = document.getElementById('glitchSound');
-        const accessSound = document.getElementById('accessSound');
-        beepSound.volume = 1.0;
-        glitchSound.volume = 1.0;
-        accessSound.volume = 1.0;
+        // WEB AUDIO API - ANTI BLOKIR
+        let audioCtx;
+        function playBeep(freq = 800, duration = 0.1, vol = 0.5) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.value = freq;
+            osc.type = 'square';
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.start(audioCtx.currentTime);
+            osc.stop(audioCtx.currentTime + duration);
+        }
 
         let scanProgress = 0;
         let lastGesture = '';
         let scanInterval;
         let camera;
         let gestureReady = false;
-
-        function playSound(audio) {
-            audio.currentTime = 0;
-            audio.play().catch(e => console.log("Audio blocked:", e));
-        }
 
         function isPeaceSign(landmarks) {
             const tipIds = [4, 8, 12, 16, 20];
@@ -122,17 +120,17 @@
                     scanProgress = 0;
                     gestureReady = false;
                     scanBox.classList.add('glitch');
-                    playSound(beepSound);
+                    playBeep(600, 0.1, 0.8); // Beep awal
                     scanInterval = setInterval(() => {
                         scanProgress += Math.random() * 15;
-                        playSound(beepSound); // Bunyi tiap % naik
+                        playBeep(800 + scanProgress * 5, 0.05, 0.6); // Nada naik tiap %
                         if (scanProgress >= 100) {
                             scanProgress = 100;
                             clearInterval(scanInterval);
                             scanInterval = null;
                             scanText.innerText = `SCAN COMPLETE`;
                             gestureReady = true;
-                            playSound(glitchSound); // Bunyi glitch pas complete
+                            playBeep(200, 0.3, 0.8); // Suara glitch rendah
                             setTimeout(() => scanBox.classList.remove('glitch'), 500);
                             checkGesture(landmarks);
                         } else {
@@ -158,18 +156,22 @@
             if (isPeaceSign(landmarks)) {
                 lastGesture = 'tiktok';
                 statusEl.innerText = "[ACCESS GRANTED] Membuka TikTok...";
-                playSound(accessSound); // Bunyi sukses
+                playBeep(1000, 0.1, 1.0); // Suara sukses kenceng
+                setTimeout(() => playBeep(1200, 0.1, 1.0), 150); // Double beep
                 setTimeout(() => {
                     location.href = 'https://www.tiktok.com/';
-                }, 500); // Delay dikit biar suaranya kedengeran
+                }, 400);
                 setTimeout(() => { lastGesture = ''; }, 4000);
             }
         }
 
         startBtn.onclick = async () => {
+            // INI KUNCI BIAR SUARA NYALA DI CHROME HP
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            playBeep(1000, 0.1, 1.0); // Test suara pas klik
+
             startBtn.style.display = 'none';
             statusEl.innerText = "Mengaktifkan kamera...";
-            playSound(accessSound); // Bunyi pas start
 
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
