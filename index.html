@@ -39,7 +39,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <button id="startBtn">TAP TO START</button>
@@ -73,9 +73,9 @@
         let lastGesture = '';
         let camera;
         let scanTimeout;
-        let faceDetected = false;
+        let latestHandResults = null;
+        let latestFaceResults = null;
 
-        // ENGLISH VOICE
         function speak(text) {
             if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
@@ -83,16 +83,14 @@
                 utterance.lang = 'en-US';
                 utterance.volume = 1.0;
                 utterance.rate = 1.0;
-                utterance.pitch = 1.0;
                 window.speechSynthesis.speak(utterance);
             }
         }
 
-        // GESTURE DETECTION
         function isPeaceSign(landmarks) {
             const tipIds = [4, 8, 12, 16, 20];
             const fingers = [];
-            fingers.push(landmarks[4].x > landmarks[3].x); // Thumb
+            fingers.push(landmarks[4].x > landmarks[3].x);
             for (let i = 1; i < 5; i++) {
                 fingers.push(landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y);
             }
@@ -100,17 +98,11 @@
         }
 
         function isThumbsUp(landmarks) {
-            const thumbTip = landmarks[4];
-            const thumbIp = landmarks[3];
-            const indexTip = landmarks[8];
-            return thumbTip.y < thumbIp.y && indexTip.y > landmarks[6].y;
+            return landmarks[4].y < landmarks[3].y && landmarks[8].y > landmarks[6].y;
         }
 
         function isThumbsDown(landmarks) {
-            const thumbTip = landmarks[4];
-            const thumbIp = landmarks[3];
-            const indexTip = landmarks[8];
-            return thumbTip.y > thumbIp.y && indexTip.y > landmarks[6].y;
+            return landmarks[4].y > landmarks[3].y && landmarks[8].y > landmarks[6].y;
         }
 
         function isOpenPalm(landmarks) {
@@ -122,15 +114,33 @@
             return openFingers >= 4;
         }
 
-        function onResults(results) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+        function drawFrame() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // HAND DETECTION
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
+            // DRAW FACE - Pake FaceMesh lebih akurat dari FaceDetection
+            if (latestFaceResults && latestFaceResults.multiFaceLandmarks && latestFaceResults.multiFaceLandmarks.length > 0) {
+                const landmarks = latestFaceResults.multiFaceLandmarks[0];
+                let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                for (const lm of landmarks) {
+                    minX = Math.min(minX, lm.x);
+                    minY = Math.min(minY, lm.y);
+                    maxX = Math.max(maxX, lm.x);
+                    maxY = Math.max(maxY, lm.y);
+                }
+                faceBox.style.display = 'block';
+                faceBox.style.left = minX * canvas.width + 'px';
+                faceBox.style.top = minY * canvas.height + 'px';
+                faceBox.style.width = (maxX - minX) * canvas.width + 'px';
+                faceBox.style.height = (maxY - minY) * canvas.height + 'px';
+                faceText.innerText = `FACE DETECTED`;
+            } else {
+                faceBox.style.display = 'none';
+            }
+
+            // DRAW HAND
+            if (latestHandResults && latestHandResults.multiHandLandmarks && latestHandResults.multiHandLandmarks.length > 0) {
+                const landmarks = latestHandResults.multiHandLandmarks[0];
                 drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
                 drawLandmarks(ctx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 3});
 
@@ -163,6 +173,7 @@
                 } else {
                     checkGesture(landmarks);
                 }
+                statusEl.innerText = "Show ✌️ to open TikTok";
             } else {
                 scanBox.style.display = 'none';
                 if (scanTimeout) {
@@ -170,22 +181,7 @@
                     scanTimeout = null;
                 }
                 scanComplete = false;
-                statusEl.innerText = faceDetected? "Face detected. Show your hand" : "Hand not detected";
-            }
-
-            // FACE DETECTION
-            if (results.detections && results.detections.length > 0) {
-                faceDetected = true;
-                const detection = results.detections[0].boundingBox;
-                faceBox.style.display = 'block';
-                faceBox.style.left = detection.xCenter * canvas.width - (detection.width * canvas.width) / 2 + 'px';
-                faceBox.style.top = detection.yCenter * canvas.height - (detection.height * canvas.height) / 2 + 'px';
-                faceBox.style.width = detection.width * canvas.width + 'px';
-                faceBox.style.height = detection.height * canvas.height + 'px';
-                faceText.innerText = `FACE DETECTED`;
-            } else {
-                faceDetected = false;
-                faceBox.style.display = 'none';
+                statusEl.innerText = latestFaceResults && latestFaceResults.multiFaceLandmarks.length > 0? "Face detected. Show your hand" : "Hand not detected";
             }
         }
 
@@ -213,20 +209,23 @@
             startBtn.style.display = 'none';
             statusEl.innerText = "Activating camera...";
 
+            canvas.width = 1280;
+            canvas.height = 720;
+
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            hands.onResults((results) => { latestHandResults = results; });
 
-            const faceDetection = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
-            faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
-
-            // Combine results
-            hands.onResults(onResults);
-            faceDetection.onResults(onResults);
+            // GANTI KE FACE MESH - LEBIH AKURAT DARI FACE DETECTION
+            const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+            faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            faceMesh.onResults((results) => { latestFaceResults = results; });
 
             camera = new Camera(video, {
                 onFrame: async () => {
                     await hands.send({image: video});
-                    await faceDetection.send({image: video});
+                    await faceMesh.send({image: video});
+                    drawFrame();
                 },
                 width: 1280,
                 height: 720
