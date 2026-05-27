@@ -39,13 +39,13 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <button id="startBtn">TAP TO START</button>
     <video id="video"></video>
     <canvas id="canvas"></canvas>
-    <div class="ui">[SYSTEM] BIOMETRIC SCANNER v3.0</div>
+    <div class="ui">[SYSTEM] BIOMETRIC SCANNER v3.2</div>
     <div id="scanBox" class="scan-box">
         <div class="corner tl"></div><div class="corner tr"></div>
         <div class="corner bl"></div><div class="corner br"></div>
@@ -71,10 +71,9 @@
 
         let scanComplete = false;
         let lastGesture = '';
-        let camera;
         let scanTimeout;
-        let latestHandResults = null;
-        let latestFaceResults = null;
+        let hands, faceDetection;
+        let running = false;
 
         function speak(text) {
             if ('speechSynthesis' in window) {
@@ -82,7 +81,6 @@
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.lang = 'en-US';
                 utterance.volume = 1.0;
-                utterance.rate = 1.0;
                 window.speechSynthesis.speak(utterance);
             }
         }
@@ -114,33 +112,23 @@
             return openFingers >= 4;
         }
 
-        function drawFrame() {
+        async function processFrame() {
+            if (!running) return;
+            await hands.send({image: video});
+            await faceDetection.send({image: video});
+            requestAnimationFrame(processFrame);
+        }
+
+        hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults((results) => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-            // DRAW FACE - Pake FaceMesh lebih akurat dari FaceDetection
-            if (latestFaceResults && latestFaceResults.multiFaceLandmarks && latestFaceResults.multiFaceLandmarks.length > 0) {
-                const landmarks = latestFaceResults.multiFaceLandmarks[0];
-                let minX = 1, minY = 1, maxX = 0, maxY = 0;
-                for (const lm of landmarks) {
-                    minX = Math.min(minX, lm.x);
-                    minY = Math.min(minY, lm.y);
-                    maxX = Math.max(maxX, lm.x);
-                    maxY = Math.max(maxY, lm.y);
-                }
-                faceBox.style.display = 'block';
-                faceBox.style.left = minX * canvas.width + 'px';
-                faceBox.style.top = minY * canvas.height + 'px';
-                faceBox.style.width = (maxX - minX) * canvas.width + 'px';
-                faceBox.style.height = (maxY - minY) * canvas.height + 'px';
-                faceText.innerText = `FACE DETECTED`;
-            } else {
-                faceBox.style.display = 'none';
-            }
-
-            // DRAW HAND
-            if (latestHandResults && latestHandResults.multiHandLandmarks && latestHandResults.multiHandLandmarks.length > 0) {
-                const landmarks = latestHandResults.multiHandLandmarks[0];
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
                 drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
                 drawLandmarks(ctx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 3});
 
@@ -152,12 +140,18 @@
                     maxY = Math.max(maxY, lm.y);
                 }
 
+                // FIX KOORDINAT MIRROR - INI KUNCINYA BIAR KOTAK GAK MELAYANG
                 const padding = 0.05;
+                const boxWidth = (maxX - minX + padding*2) * canvas.width;
+                const boxHeight = (maxY - minY + padding*2) * canvas.height;
+                const boxLeft = (1 - maxX - padding) * canvas.width; // FLIP X KARENA VIDEO DI-MIRROR
+                const boxTop = (minY - padding) * canvas.height;
+
                 scanBox.style.display = 'block';
-                scanBox.style.left = (minX - padding) * canvas.width + 'px';
-                scanBox.style.top = (minY - padding) * canvas.height + 'px';
-                scanBox.style.width = (maxX - minX + padding*2) * canvas.width + 'px';
-                scanBox.style.height = (maxY - minY + padding*2) * canvas.height + 'px';
+                scanBox.style.left = boxLeft + 'px';
+                scanBox.style.top = boxTop + 'px';
+                scanBox.style.width = boxWidth + 'px';
+                scanBox.style.height = boxHeight + 'px';
 
                 if (!scanComplete) {
                     scanBox.classList.add('glitch');
@@ -181,9 +175,31 @@
                     scanTimeout = null;
                 }
                 scanComplete = false;
-                statusEl.innerText = latestFaceResults && latestFaceResults.multiFaceLandmarks.length > 0? "Face detected. Show your hand" : "Hand not detected";
+                statusEl.innerText = "Hand not detected";
             }
-        }
+        });
+
+        faceDetection = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
+        faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+        faceDetection.onResults((results) => {
+            if (results.detections && results.detections.length > 0) {
+                const detection = results.detections[0].boundingBox;
+                // FIX KOORDINAT MIRROR UNTUK MUKA JUGA
+                const boxWidth = detection.width * canvas.width;
+                const boxHeight = detection.height * canvas.height;
+                const boxLeft = (1 - detection.xCenter - detection.width/2) * canvas.width; // FLIP X
+                const boxTop = (detection.yCenter - detection.height/2) * canvas.height;
+
+                faceBox.style.display = 'block';
+                faceBox.style.left = boxLeft + 'px';
+                faceBox.style.top = boxTop + 'px';
+                faceBox.style.width = boxWidth + 'px';
+                faceBox.style.height = boxHeight + 'px';
+                faceText.innerText = `FACE DETECTED`;
+            } else {
+                faceBox.style.display = 'none';
+            }
+        });
 
         function checkGesture(landmarks) {
             if (!scanComplete || lastGesture) return;
@@ -208,30 +224,16 @@
             speak("System activated. Starting biometric scan");
             startBtn.style.display = 'none';
             statusEl.innerText = "Activating camera...";
+            running = true;
 
-            canvas.width = 1280;
-            canvas.height = 720;
-
-            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-            hands.onResults((results) => { latestHandResults = results; });
-
-            // GANTI KE FACE MESH - LEBIH AKURAT DARI FACE DETECTION
-            const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-            faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-            faceMesh.onResults((results) => { latestFaceResults = results; });
-
-            camera = new Camera(video, {
-                onFrame: async () => {
-                    await hands.send({image: video});
-                    await faceMesh.send({image: video});
-                    drawFrame();
-                },
-                width: 1280,
-                height: 720
+            const camera = new Camera(video, {
+                onFrame: async () => {},
+                width: 640,
+                height: 480
             });
             await camera.start();
-            statusEl.innerText = "Show ✌️ to open TikTok";
+            processFrame();
+            statusEl.innerText = "Show your hand to camera";
         };
     </script>
 </body>
