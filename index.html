@@ -7,15 +7,15 @@
         body { margin: 0; background: #000; color: #0ff; font-family: 'Courier New', monospace; overflow: hidden; }
         #video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         #canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
-       .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
-       .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
-       .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
-       .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
-       .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
-       .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
-       .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
-       .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
-       .glitch { animation: glitch 0.3s linear infinite; }
+      .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
+      .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
+      .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
+      .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
+      .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+      .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
+      .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
+      .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+      .glitch { animation: glitch 0.3s linear infinite; }
         @keyframes glitch {
             0% { transform: translate(0) }
             20% { transform: translate(-2px, 2px) }
@@ -64,6 +64,22 @@
         let camera;
         let gestureReady = false;
 
+        function isPeaceSign(landmarks) {
+            // Cek jari yang naik: telunjuk + tengah, lainnya turun
+            const tipIds = [4, 8, 12, 16, 20]; // jempol, telunjuk, tengah, manis, kelingking
+            const fingers = [];
+
+            // Jempol: cek x karena orientasinya beda
+            fingers.push(landmarks[4].x > landmarks[3].x);
+            // 4 jari lain: cek y, tip harus di atas pip
+            for (let i = 1; i < 5; i++) {
+                fingers.push(landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y);
+            }
+
+            // Peace = [jempol bebas, telunjuk naik, tengah naik, manis turun, kelingking turun]
+            return fingers[1] && fingers[2] &&!fingers[3] &&!fingers[4];
+        }
+
         function onResults(results) {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
@@ -103,13 +119,13 @@
                             scanText.innerText = `SCAN COMPLETE`;
                             gestureReady = true;
                             setTimeout(() => scanBox.classList.remove('glitch'), 500);
-                            triggerGesture(landmarks);
+                            checkGesture(landmarks);
                         } else {
                             scanText.innerText = `SCANNING... ${Math.floor(scanProgress)}%`;
                         }
                     }, 100);
                 } else if (gestureReady) {
-                    triggerGesture(landmarks);
+                    checkGesture(landmarks);
                 }
             } else {
                 scanBox.style.display = 'none';
@@ -121,25 +137,14 @@
             }
         }
 
-        function triggerGesture(landmarks) {
-            if (!gestureReady) return;
-            const thumbTip = landmarks[4];
-            const indexTip = landmarks[8];
-            const middleTip = landmarks[12];
-            const wrist = landmarks[0];
+        function checkGesture(landmarks) {
+            if (!gestureReady || lastGesture === 'wa') return;
 
-            // Jempol ke atas = WhatsApp
-            if (thumbTip.y < indexTip.y - 0.1 && thumbTip.y < middleTip.y - 0.1 && lastGesture!== 'wa') {
+            // Cek peace sign ✌️
+            if (isPeaceSign(landmarks)) {
                 lastGesture = 'wa';
                 statusEl.innerText = "[ACCESS GRANTED] Membuka WhatsApp...";
-                location.href = 'https://wa.me/'; // Pake location.href biar gak diblokir
-                setTimeout(() => { lastGesture = ''; }, 4000);
-            }
-            // Telapak tangan = Instagram
-            else if (indexTip.y < wrist.y && middleTip.y < wrist.y && lastGesture!== 'ig') {
-                lastGesture = 'ig';
-                statusEl.innerText = "[ACCESS GRANTED] Membuka Instagram...";
-                location.href = 'https://instagram.com';
+                location.href = 'https://wa.me/';
                 setTimeout(() => { lastGesture = ''; }, 4000);
             }
         }
@@ -154,7 +159,7 @@
 
             camera = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 });
             await camera.start();
-            statusEl.innerText = "Arahkan telapak tangan ke kamera";
+            statusEl.innerText = "Acungkan ✌️ untuk buka WhatsApp";
         };
     </script>
 </body>
