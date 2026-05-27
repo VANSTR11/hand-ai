@@ -7,15 +7,15 @@
         body { margin: 0; background: #000; color: #0ff; font-family: 'Courier New', monospace; overflow: hidden; }
         #video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         #canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
-      .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
-      .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
-      .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
-      .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
-      .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
-      .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
-      .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
-      .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
-      .glitch { animation: glitch 0.3s linear infinite; }
+    .ui { position: absolute; top: 20px; left: 20px; z-index: 10; font-size: 20px; text-shadow: 0 0 10px #0ff; }
+    .scan-box { position: absolute; border: 3px solid #0ff; box-shadow: 0 0 20px #0ff, inset 0 0 20px #0ff; z-index: 5; display: none; }
+    .scan-text { position: absolute; bottom: -30px; left: 50%; transform: translateX(-50%); color: #0ff; font-size: 18px; font-weight: bold; }
+    .corner { position: absolute; width: 20px; height: 20px; border: 3px solid #0ff; }
+    .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+    .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
+    .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
+    .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+    .glitch { animation: glitch 0.3s linear infinite; }
         @keyframes glitch {
             0% { transform: translate(0) }
             20% { transform: translate(-2px, 2px) }
@@ -49,6 +49,11 @@
     </div>
     <div id="status">Klik tombol untuk aktifkan kamera</div>
 
+    <!-- EFEK SUARA -->
+    <audio id="beepSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_8b2d3b1b7c.mp3?filename=beep-6-96243.mp3" preload="auto"></audio>
+    <audio id="glitchSound" src="https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8a8e1e4b1.mp3?filename=glitch-sound-effect-120058.mp3" preload="auto"></audio>
+    <audio id="accessSound" src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1ca4a.mp3?filename=success-1-6297.mp3" preload="auto"></audio>
+
     <script type="module">
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
@@ -58,25 +63,32 @@
         const statusEl = document.getElementById('status');
         const startBtn = document.getElementById('startBtn');
 
+        // Sound
+        const beepSound = document.getElementById('beepSound');
+        const glitchSound = document.getElementById('glitchSound');
+        const accessSound = document.getElementById('accessSound');
+        beepSound.volume = 0.10;
+        glitchSound.volume = 0.10;
+        accessSound.volume = 0.10;
+
         let scanProgress = 0;
         let lastGesture = '';
         let scanInterval;
         let camera;
         let gestureReady = false;
 
-        function isPeaceSign(landmarks) {
-            // Cek jari yang naik: telunjuk + tengah, lainnya turun
-            const tipIds = [4, 8, 12, 16, 20]; // jempol, telunjuk, tengah, manis, kelingking
-            const fingers = [];
+        function playSound(audio) {
+            audio.currentTime = 0;
+            audio.play().catch(e => console.log("Audio blocked:", e));
+        }
 
-            // Jempol: cek x karena orientasinya beda
+        function isPeaceSign(landmarks) {
+            const tipIds = [4, 8, 12, 16, 20];
+            const fingers = [];
             fingers.push(landmarks[4].x > landmarks[3].x);
-            // 4 jari lain: cek y, tip harus di atas pip
             for (let i = 1; i < 5; i++) {
                 fingers.push(landmarks[tipIds[i]].y < landmarks[tipIds[i] - 2].y);
             }
-
-            // Peace = [jempol bebas, telunjuk naik, tengah naik, manis turun, kelingking turun]
             return fingers[1] && fingers[2] &&!fingers[3] &&!fingers[4];
         }
 
@@ -110,14 +122,17 @@
                     scanProgress = 0;
                     gestureReady = false;
                     scanBox.classList.add('glitch');
+                    playSound(beepSound);
                     scanInterval = setInterval(() => {
                         scanProgress += Math.random() * 15;
+                        playSound(beepSound); // Bunyi tiap % naik
                         if (scanProgress >= 100) {
                             scanProgress = 100;
                             clearInterval(scanInterval);
                             scanInterval = null;
                             scanText.innerText = `SCAN COMPLETE`;
                             gestureReady = true;
+                            playSound(glitchSound); // Bunyi glitch pas complete
                             setTimeout(() => scanBox.classList.remove('glitch'), 500);
                             checkGesture(landmarks);
                         } else {
@@ -138,13 +153,15 @@
         }
 
         function checkGesture(landmarks) {
-            if (!gestureReady || lastGesture === 'wa') return;
+            if (!gestureReady || lastGesture === 'tiktok') return;
 
-            // Cek peace sign ✌️
             if (isPeaceSign(landmarks)) {
-                lastGesture = 'wa';
-                statusEl.innerText = "[ACCESS GRANTED] Membuka WhatsApp...";
-                location.href = 'https://wa.me/';
+                lastGesture = 'tiktok';
+                statusEl.innerText = "[ACCESS GRANTED] Membuka TikTok...";
+                playSound(accessSound); // Bunyi sukses
+                setTimeout(() => {
+                    location.href = 'https://www.tiktok.com/';
+                }, 500); // Delay dikit biar suaranya kedengeran
                 setTimeout(() => { lastGesture = ''; }, 4000);
             }
         }
@@ -152,6 +169,7 @@
         startBtn.onclick = async () => {
             startBtn.style.display = 'none';
             statusEl.innerText = "Mengaktifkan kamera...";
+            playSound(accessSound); // Bunyi pas start
 
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
@@ -159,7 +177,7 @@
 
             camera = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 });
             await camera.start();
-            statusEl.innerText = "Acungkan ✌️ untuk buka WhatsApp";
+            statusEl.innerText = "Acungkan ✌️ untuk buka TikTok";
         };
     </script>
 </body>
